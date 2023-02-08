@@ -1,0 +1,153 @@
+---
+title: "PCPCA_Simulation"
+author: "Wu Shangzhe/A0194505A"
+date: '2022-08-28'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup}
+rm(list=ls())
+set.seed(4199)
+library(MASS)
+library(pracma)
+library(tidyverse)
+```
+
+## Generating samples (Dataset 2)
+
+```{r}
+N = 600
+sigma <- matrix(data=c(2,-1.7,-1.7,2), nrow=2)
+
+X_group1 <-  mvrnorm(n = N/4, mu = c(6,-6), Sigma = sigma, empirical = FALSE)
+X_df1 <- data.frame(axis1 = X_group1[,1],axis2 = X_group1[,2],group = rep("Foreground Group 1",N/4))
+
+X_group2 <- mvrnorm(n = N/4, mu = c(-6,6), Sigma = sigma, empirical = FALSE)
+X_df2 <- data.frame(axis1 = X_group2[,1],axis2 = X_group2[,2],group = rep("Foreground Group 2",N/4))
+
+Y <- mvrnorm(n = N/2, mu = c(0,0), Sigma = sigma, empirical = FALSE)
+Y_df <- data.frame(axis1 = Y[,1],axis2 = Y[,2],group = rep("Background Group",N/2))
+
+data_all <- rbind(X_df1,X_df2,Y_df)
+
+ggplot(data_all, mapping=aes(x=axis1, y=axis2))+
+  ggtitle("Simulated Dataset 2") +
+  geom_point(aes(col=group))+
+  theme_classic()
+
+```
+
+## PPCA Solution
+
+```{r}
+n <- N
+m <- 0
+gamma = 0
+
+X = rbind(X_group1,X_group2,Y)
+#Cx = n*var(X)
+#Cy = m*var(Y)
+#C = Cx - gamma*Cy
+
+Cx = 0
+Cy = 0
+for (i in 1:n){
+  Cx = Cx + X[i,] %*% t(X[i,])
+}
+
+C = Cx
+
+sigma2_hat <- eigen(C)$values[2]/(n-gamma*m)
+
+Uq <- eigen(C)$vectors[1:2,1]
+lambda <- eigen(C)$values[1]
+R <- randortho(1, type = "orthonormal")
+
+W_hat <- Uq %*% sqrt(lambda/(n-gamma*m)-sigma2_hat*diag(1)) %*% R
+```
+
+
+## Create Plots for PPCA
+```{r}
+line_slope_ppca = W_hat[2,1]/W_hat[1,1]
+
+ggplot(data_all, mapping=aes(x=axis1, y=axis2))+
+  ggtitle("Direction obtained by PPCA") +
+  geom_point(aes(col=group))+
+  geom_abline(slope=line_slope_ppca,intercept = 0) +
+  theme_classic()
+
+ggsave("pca_fig5.png", plot=last_plot(), width=8,height=6)
+```
+
+
+## PCPCA with different gamma
+
+```{r}
+n <- N/2
+m <- N/2
+gamma = 0.9
+
+X = rbind(X_group1,X_group2)
+#Cx = n*var(X)
+#Cy = m*var(Y)
+#C = Cx - gamma*Cy
+
+Cx = 0
+Cy = 0
+for (i in 1:n){
+  Cx = Cx + X[i,] %*% t(X[i,])
+}
+
+for (i in 1:m){
+  Cy = Cy + Y[i,] %*% t(Y[i,])
+}
+
+C = Cx - gamma*Cy
+
+sigma2_hat <- eigen(C)$values[2]/(n-gamma*m)
+
+Uq <- eigen(C)$vectors[1:2,1]
+lambda <- eigen(C)$values[1]
+R <- randortho(1, type = "orthonormal")
+
+W_hat <- Uq %*% sqrt(lambda/(n-gamma*m)-sigma2_hat*diag(1)) %*% R
+```
+
+
+## Create Plots for PCPCA
+```{r}
+line_slope = W_hat[2,1]/W_hat[1,1]
+
+ggplot(data_all, mapping=aes(x=axis1, y=axis2))+
+  ggtitle("γ = 0.9") +
+  geom_point(aes(col=group))+
+  geom_abline(slope=line_slope,intercept = 0, col="purple") +
+  geom_abline(slope=line_slope_ppca,intercept = 0, col="black") +
+  theme_classic()
+
+ggsave("pca_fig6_4.png", plot=last_plot(), width=8,height=6)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

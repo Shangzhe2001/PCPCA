@@ -1,0 +1,494 @@
+---
+title: "Mouse_Protein_QDA"
+author: "Wu Shangzhe/A0194505A"
+date: '2022-12-09'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Required Libraries
+set.seed(1)
+rm(list=ls())
+#setwd("C:\\Users\\92503\\Desktop\\DSA4199 FYP\\PCPCA\\CPCA & PCPCA\\Mouse protein expression")
+setwd("C:\\Users\\ASUS\\Desktop\\DSA4199 FYP\\PCPCA\\CPCA & PCPCA\\Mouse protein expression")
+library(readxl)
+library(MASS)
+library(pracma)
+library(tidyverse)
+```
+
+```{r}
+# Read in data
+data <- read_excel("Data_Cortex_Nuclear.xlsx")
+
+# Remove NA rows
+#data <- data[complete.cases(data),] # 552 samples
+
+# (In code) Fill NA with 0
+data[is.na(data)] <- 0
+
+# Foreground group - data from mice who did receive shock therapy
+# data.Behavior == "S/C", data.Treatment == "Saline")
+X <- data[data$Behavior == "S/C" & data$Treatment == "Saline",] # 270 samples
+X_group <- rep("Foreground",dim(X)[1])
+X <- as.matrix(X[,2:78])
+X <- scale(X)
+
+
+# Background group - data from mice who did not receive shock therapy
+Y <- data[data$Behavior == "C/S" &  data$Treatment == "Saline" & data$Genotype == "Control" ,] # 135 samples 
+Y_group <- rep("Background",dim(Y)[1])
+Y <- as.matrix(Y[,2:78])
+Y <- scale(Y)
+
+data = rbind(X,Y)
+groups = c(rep("Foreground",dim(X)[1]),rep("Background",dim(Y)[1]))
+data_full = cbind(data,groups)
+```
+
+```{r}
+# Train-Test Split (80% Training, 20% Testing)
+train_index = sample(dim(data)[1],floor(0.8*dim(data)[1]))
+
+train_X = data[train_index,]
+train_Y = groups[train_index]
+test_X = data[-train_index,]
+test_Y = groups[-train_index]
+
+# Standardizing data manually
+X_mean = apply(train_X,2,mean)
+X_std = apply(train_X,2,sd)
+
+std_manual <- function(x){
+  return((x-X_mean)/X_std)
+}
+
+train_X <- apply(train_X,1,std_manual)
+train_X <- t(train_X)
+test_X <- apply(test_X,1,std_manual)
+test_X <- t(test_X)
+```
+
+```{r}
+# Visualizing QDA Result tool with ggplot2
+# Credit: https://stackoverflow.com/questions/63782598/quadratic-discriminant-analysis-qda-plot-in-r
+decisionplot_ggplot <- function(model, data, class = NULL, predict_type = "class",
+                         resolution = 100, showgrid = TRUE, ...) {
+  
+  if(!is.null(class)) cl <- data[,class] else cl <- 1
+  data <- data[,1:2]
+  cn <- colnames(data)
+  
+  k <- length(unique(cl))
+  
+  data$pch <- data$col <- as.integer(cl) + 1L
+  gg <- ggplot(aes_string(cn[1], cn[2]), data = data) + 
+    geom_point(aes_string(col = 'as.factor(col)'), size = 3)
+  
+  # make grid
+  r <- sapply(data[, 1:2], range, na.rm = TRUE)
+  xs <- seq(r[1, 1], r[2, 1], length.out = resolution)
+  ys <- seq(r[1, 2], r[2, 2], length.out = resolution)
+  
+  g <- cbind(rep(xs, each = resolution), 
+             rep(ys, time = resolution))
+  colnames(g) <- colnames(r)
+  
+  g <- as.data.frame(g)
+  
+  ### guess how to get class labels from predict
+  ### (unfortunately not very consistent between models)
+  p <- predict(model, g, type = predict_type)
+  if(is.list(p)) p <- p$class
+  g$col <- g$pch <- as.integer(as.factor(p)) + 1L
+  
+  if(showgrid) 
+    gg <- gg + geom_point(aes_string(x = cn[1], y = cn[2], col = 'factor(col)'), data = g, shape = 20, size = 1)
+  
+  gg + geom_contour(aes_string(x = cn[1], y = cn[2], z = 'col'), data = g, inherit.aes = FALSE)
+}
+
+```
+
+## Perform Naive PCA
+
+```{r}
+S = cov(train_X)
+pca <- princomp(covmat=S)
+#summary(pca,loading=T)
+
+# Lower-Dimension = 2
+# Get Naive PCA data
+pca_train_X <- train_X %*% pca$loadings[,1:2]
+pca_test_X <- test_X %*% pca$loadings[,1:2]
+
+
+pca_train_X_df <- data.frame(PC1 = pca_train_X[,1],PC2 = pca_train_X[,2], Groups = as.factor(train_Y))
+pca_test_X_df <- data.frame(PC1 = pca_test_X[,1],PC2 = pca_test_X[,2])
+
+qda_pca <- qda(Groups ~ PC1+PC2 , data=pca_train_X_df, prior=c(1,1)/2)
+```
+
+```{r}
+# QDA Boundary Plot for Naive PCA
+gg <- decisionplot_ggplot(qda_pca, pca_train_X_df , class ="Groups")
+
+gg+ 
+  ggtitle("QDA Boundary for Naive PCA")+
+  scale_color_discrete(name="Groups",labels=c("Foreground","Background"))+
+  theme_classic()
+
+#ggsave("pca_fig15.png", plot=last_plot(), width=8,height=6)
+
+# PCA training error
+pca_train_pred <- predict(qda_pca)
+pca_tab1 = table(train_Y,pca_train_pred$class)
+pca_tab1 # training error rate= (51+103)/324 = 0.4753
+
+# PCA test error
+pca_test_pred <- predict(qda_pca,newdata=pca_test_X_df)
+pca_tab2 = table(test_Y,pca_test_pred$class)
+pca_tab2 # test error rate = (10+31)/81 = 0.5062
+```
+
+```{r}
+png("pca_fig14_1.png", width=400,height=300)
+
+plot(x=pca_train_X_df$PC1,y=pca_train_X_df$PC2,col=pca_train_X_df$Groups,pch=20,
+     main="Principal Components of Training Data for naive PCA", xlab="PC1",ylab="PC2")
+legend("bottomleft",
+       legend = levels(factor(train_Y)),
+       pch = 20,
+       col = factor(levels(factor(train_Y))))
+
+dev.off()
+```
+
+```{r}
+png("pca_fig14_2.png", width=400,height=300)
+plot(pca_test_X_df,col=factor(test_Y),pch=20,
+     main="Principal Components of Test Data for naive PCA", xlab="PC1",ylab="PC2")
+
+legend("bottomleft",
+       legend = levels(factor(test_Y)),
+       pch = 20,
+       col = factor(levels(factor(test_Y))))
+
+dev.off()
+```
+
+## Perform PPCA
+
+```{r}
+# Similarly, we set low dimension = 2
+d <- 77
+q <- 2
+
+Sn <- var(train_X)
+sigma2_hat <- mean(eigen(Sn)$values[(q+1):d])
+Uq <- eigen(Sn)$vectors[1:d,1:q]
+Vq <- matrix(0,q,q)
+for (i in 1:q){
+  Vq[i,i] <- eigen(Sn)$values[i]-sigma2_hat
+}
+R <- randortho(q, type = "orthonormal")
+
+W_hat <- Uq %*% sqrt(Vq) %*% R
+M_hat <- sigma2_hat*diag(q) + t(W_hat) %*% W_hat
+```
+
+```{r}
+# Get PPCA data
+ppca_train_X <- t(solve(M_hat) %*% t(W_hat) %*% t(train_X))
+ppca_test_X <- t(solve(M_hat) %*% t(W_hat) %*% t(test_X))
+
+ppca_train_X_df = data.frame(PPC1 = ppca_train_X[,1],PPC2 = ppca_train_X[,2], Groups = as.factor(train_Y))
+ppca_test_X_df = data.frame(PPC1 = ppca_test_X[,1],PPC2 = ppca_test_X[,2])
+
+# Perform QDA
+qda_ppca <- qda(Groups~PPC1+PPC2 , data=ppca_train_X_df, prior=c(1,1)/2)
+
+
+# QDA Boundary Plot for Naive PCA
+gg <- decisionplot_ggplot(qda_ppca, ppca_train_X_df , class ="Groups")
+
+gg+ 
+  ggtitle("QDA Boundary for PPCA")+
+  scale_color_discrete(name="Groups",labels=c("Foreground","Background"))+
+  theme_classic()
+
+
+#ggsave("pca_fig17.png", plot=last_plot(), width=8,height=6)
+
+
+# PPCA training error
+ppca_train_pred <- predict(qda_ppca)
+ppca_tab1 = table(train_Y,ppca_train_pred$class)
+ppca_tab1 # training error rate= (51+103)/324 = 0.4753
+
+# PpCA test error
+ppca_test_pred <- predict(qda_ppca,newdata=ppca_test_X_df)
+ppca_tab2 = table(test_Y,ppca_test_pred$class)
+ppca_tab2 # test error rate = (10+31)/81 = 0.5062
+
+```
+
+```{r}
+png("pca_fig16_1.png", width=400,height=300)
+
+plot(x=ppca_train_X_df$PPC1,y=ppca_train_X_df$PPC2,col=ppca_train_X_df$Groups,pch=20,
+     main="Principal Components of Training Data for PPCA", xlab="PPC1",ylab="PPC2")
+legend("bottomleft",
+       legend = levels(factor(train_Y)),
+       pch = 20,
+       col = factor(levels(factor(train_Y))))
+
+dev.off()
+```
+
+```{r}
+png("pca_fig16_2.png", width=400,height=300)
+
+plot(ppca_test_X_df,col=factor(test_Y),pch=20,
+     main="Principal Components of Test Data for PPCA", xlab="PPC1",ylab="PPC2")
+
+legend("bottomleft",
+       legend = levels(factor(test_Y)),
+       pch = 20,
+       col = factor(levels(factor(test_Y))))
+
+dev.off()
+```
+
+## Perform PCPCA
+```{r}
+# Write a PCPCA function to return a list of sigma2_hat,W_hat,M_hat
+PCPCA <- function(train_X,train_Y,q,gamma){
+  X = train_X[train_Y == "Foreground",]
+  Y = train_X[train_Y == "Background",]
+  
+  # Use Maximum likelihood estimation Find W
+  n <- dim(X)[1]
+  m <- dim(Y)[1]
+  D <- dim(X)[2]
+  
+  Cx = 0
+  Cy = 0
+  for (i in 1:n){
+    Cx = Cx + X[i,] %*% t(X[i,])
+  }
+  
+  for (i in 1:m){
+    Cy = Cy + Y[i,] %*% t(Y[i,])
+  }
+  
+  C = Cx - gamma*Cy
+  
+  sigma2_hat <- sum(eigen(C)$values[(q+1):D])/(n-gamma*m)/(D-q)
+  Uq <- eigen(C)$vectors[1:D,1:q]
+  lambda <- diag(eigen(C)$values[1:q])
+  R <- randortho(q, type = "orthonormal")
+  
+  W_hat <- Uq %*% sqrt(lambda/(n-gamma*m)-sigma2_hat*diag(q)) %*% R
+  M_hat <- sigma2_hat*diag(q) + t(W_hat) %*% W_hat
+  
+  return(list(sigma2_hat,W_hat,M_hat))
+}
+```
+
+```{r}
+W_hat <- PCPCA(train_X,train_Y,2,1.5)[[2]]
+M_hat <- PCPCA(train_X,train_Y,2,1.5)[[3]]
+
+# Get PCPCA data
+pcpca_train_X <- t(solve(M_hat) %*% t(W_hat) %*% t(train_X))
+pcpca_test_X <- t(solve(M_hat) %*% t(W_hat) %*% t(test_X))
+
+pcpca_train_X_df = data.frame(PCPC1 = pcpca_train_X[,1],PCPC2 = pcpca_train_X[,2], Groups = as.factor(train_Y))
+pcpca_test_X_df = data.frame(PCPC1 = pcpca_test_X[,1],PCPC2 = pcpca_test_X[,2])
+
+# Perform QDA
+qda_pcpca <- qda(Groups~PCPC1+PCPC2 , data=pcpca_train_X_df, prior=c(1,1)/2)
+
+
+# QDA Boundary Plot for PCCA
+gg <- decisionplot_ggplot(qda_pcpca, pcpca_train_X_df , class ="Groups")
+
+gg+ 
+  ggtitle("QDA Boundary for PCPCA")+
+  scale_color_discrete(name="Groups",labels=c("Foreground","Background"))+
+  theme_classic()
+
+# PCPCA training error
+pcpca_train_pred <- predict(qda_pcpca)
+pcpca_tab1 = table(train_Y,pcpca_train_pred$class)
+pcpca_tab1 # training error rate= (21+14)/324 = 0.1080
+(sum(pcpca_tab1) - sum(diag(pcpca_tab1)))/sum(pcpca_tab1)
+
+
+# PCPCA test error
+pcpca_test_pred <- predict(qda_pcpca,newdata=pcpca_test_X_df)
+pcpca_tab2 = table(test_Y,pcpca_test_pred$class)
+pcpca_tab2 # test error rate = 7/81 = 0.0864
+(sum(pcpca_tab2) - sum(diag(pcpca_tab2)))/sum(pcpca_tab2)
+
+
+plot(x=pcpca_train_X_df$PCPC1,y=pcpca_train_X_df$PCPC2,col=pcpca_train_X_df$Groups,pch=20)
+legend("bottomleft",
+       legend = levels(factor(train_Y)),
+       pch = 20,
+       col = factor(levels(factor(train_Y))))
+
+plot(pcpca_test_X_df,col=factor(test_Y),pch=20)
+
+legend("bottomleft",
+       legend = levels(factor(test_Y)),
+       pch = 20,
+       col = factor(levels(factor(test_Y))))
+```
+
+```{r}
+gamma_list = seq(0,1.9,by=0.1)
+pcpca_train_error_rate = rep(Inf,length(gamma_list))
+pcpca_test_error_rate = rep(Inf,length(gamma_list))
+
+
+# Use QDA with PCPCA & different gamma
+# Set low dimension q=2
+q = 2
+for (i in 1:length(gamma_list)){
+  gamma = gamma_list[i]
+  W_hat <- PCPCA(train_X,train_Y,q,gamma)[[2]]
+  M_hat <- PCPCA(train_X,train_Y,q,gamma)[[3]]
+  
+  pcpca_train_X <- t(solve(M_hat) %*% t(W_hat) %*% t(train_X))
+  pcpca_test_X <- t(solve(M_hat) %*% t(W_hat) %*% t(test_X))
+  
+  pcpca_train_X_df = data.frame(PCPC1 = pcpca_train_X[,1],PCPC2 = pcpca_train_X[,2], Groups =
+                                 as.factor(train_Y))
+  pcpca_test_X_df = data.frame(PCPC1 = pcpca_test_X[,1],PCPC2 = pcpca_test_X[,2])
+  
+
+  # Perform QDA
+  qda_pcpca <- qda(Groups~PCPC1+PCPC2 , data=pcpca_train_X_df, prior=c(1,1)/2)
+  
+  # PCPCA training error
+  pcpca_train_pred <- predict(qda_pcpca)
+  pcpca_tab1 = table(train_Y,pcpca_train_pred$class)
+  pcpca_train_error_rate[i] = (sum(pcpca_tab1) - sum(diag(pcpca_tab1)))/sum(pcpca_tab1)
+  
+  # PCPCA test error
+  pcpca_test_pred <- predict(qda_pcpca,newdata=pcpca_test_X_df)
+  pcpca_tab2 = table(test_Y,pcpca_test_pred$class)
+  pcpca_test_error_rate[i] = (sum(pcpca_tab2) - sum(diag(pcpca_tab2)))/sum(pcpca_tab2)
+}
+```
+
+```{r}
+png("pca_fig18_1.png", width=400,height=300)
+
+plot(gamma_list,pcpca_train_error_rate, pch=20,type="l",
+     main="Training Error for QDA with PCPCA and different gamma",
+     xlab="gamma",ylab="QDA Training Error Rate")
+points(gamma_list,pcpca_train_error_rate,col="black",cex=1.5,pch=20)
+points(gamma_list[which.min(pcpca_train_error_rate)],pcpca_train_error_rate[which.min(pcpca_train_error_rate)],col="red",cex=2,pch=18)
+
+dev.off()
+```
+
+```{r}
+png("pca_fig18_2.png", width=400,height=300)
+
+plot(gamma_list,pcpca_test_error_rate, pch=20,type="l",
+     main="Test Error for QDA with PCPCA and different gamma",
+     xlab="gamma",ylab="QDA Test Error Rate")
+points(gamma_list,pcpca_test_error_rate,col="black",cex=1.5,pch=20)
+points(gamma_list[which.min(pcpca_test_error_rate)],pcpca_test_error_rate[which.min(pcpca_test_error_rate)],col="red",cex=2,pch=18)
+
+dev.off()
+```
+
+```{r}
+set.seed(3)
+# Perform QDA for optimal gamma=1.9
+W_hat <- PCPCA(train_X,train_Y,2,1.9)[[2]]
+M_hat <- PCPCA(train_X,train_Y,2,1.9)[[3]]
+
+# Get PCPCA data
+pcpca_train_X <- t(solve(M_hat) %*% t(W_hat) %*% t(train_X))
+pcpca_test_X <- t(solve(M_hat) %*% t(W_hat) %*% t(test_X))
+
+pcpca_train_X_df = data.frame(PCPC1 = pcpca_train_X[,1],PCPC2 = pcpca_train_X[,2], Groups = as.factor(train_Y))
+pcpca_test_X_df = data.frame(PCPC1 = pcpca_test_X[,1],PCPC2 = pcpca_test_X[,2])
+qda_pcpca <- qda(Groups~PCPC1+PCPC2 , data=pcpca_train_X_df, prior=c(1,1)/2)
+
+
+# QDA Boundary Plot for PCCA
+gg <- decisionplot_ggplot(qda_pcpca, pcpca_train_X_df , class ="Groups")
+
+gg+ 
+  ggtitle("QDA Boundary for PCPCA, gamma = 1.9")+
+  scale_color_discrete(name="Groups",labels=c("Foreground","Background"))+
+  theme_classic()
+
+#ggsave("pca_fig20.png", plot=last_plot(), width=8,height=6)
+
+# PCPCA training error
+pcpca_train_pred <- predict(qda_pcpca)
+pcpca_tab1 = table(train_Y,pcpca_train_pred$class)
+pcpca_tab1 # training error rate= (20+14)/324 = 0.0957
+(sum(pcpca_tab1) - sum(diag(pcpca_tab1)))/sum(pcpca_tab1)
+
+
+# PCPCA test error
+pcpca_test_pred <- predict(qda_pcpca,newdata=pcpca_test_X_df)
+pcpca_tab2 = table(test_Y,pcpca_test_pred$class)
+pcpca_tab2 # test error rate = 5/81 = 0.0617
+(sum(pcpca_tab2) - sum(diag(pcpca_tab2)))/sum(pcpca_tab2)
+
+```
+
+```{r}
+png("pca_fig19_1.png", width=600,height=450)
+
+plot(x=pcpca_train_X_df$PCPC1,y=pcpca_train_X_df$PCPC2,col=pcpca_train_X_df$Groups,pch=20,
+     main="Principal Components of Training Data for PCPCA, gamma = 1.9", xlab="PCPC1",ylab="PCPC2")
+legend("bottomleft",
+       legend = levels(factor(train_Y)),
+       pch = 20,
+       col = factor(levels(factor(train_Y))))
+
+dev.off()
+```
+
+```{r}
+png("pca_fig19_2.png", width=600,height=450)
+
+plot(pcpca_test_X_df,col=factor(test_Y),pch=20,
+     main="Principal Components of Test Data for PCPCA, gamma = 1.9", xlab="PCPC1",ylab="PCPC2")
+
+legend("bottomleft",
+       legend = levels(factor(test_Y)),
+       pch = 20,
+       col = factor(levels(factor(test_Y))))
+
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

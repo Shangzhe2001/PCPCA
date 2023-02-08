@@ -1,0 +1,117 @@
+---
+title: "PPCA Simulation"
+author: "Wu Shangzhe/A0194505A"
+date: '2022-08-20'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+set.seed(4199)
+library(MASS)
+library(pracma)
+```
+
+## PPCA Simulation
+
+### Simulating Samples (Previous, Wrong)
+
+Generating 1000 sample X with mean and covariance matrix
+
+```{r, eval = FALSE}
+# Sample Set-ups
+d <- 10
+muX <- rep(0,d)
+covX <- matrix(0,d,d)
+
+# Here we use second matrix in the meeting notes
+pho <- 0.5
+for(i in 1:d){
+  for(j in 1:d){
+    covX[i,j] <- pho^(abs(i-j))
+  }
+}
+
+# Generate 1000 samples
+N <- 1000
+X <- mvrnorm(n = N, mu = muX, Sigma = covX, empirical = FALSE)
+
+# Check the mean and covariance matrix of X
+cov(X)
+```
+
+### Simulating Samples (Corrected)
+
+```{r}
+# Sample Set-ups
+set.seed(0)
+d <- 10
+q <- 5
+muX <- rep(0,d)
+covX <- matrix(0,d,d)
+
+# Create True W and true error sigma
+W_long <- rnorm(d*q, mean = 0, sd = 1)
+True_W <- matrix(data = W_long, nrow = d, ncol = q)
+True_sigma2 <- 0.05
+
+True_Sigma <- True_W %*% t(True_W) + True_sigma2*diag(d)
+
+# Generate 1000 samples
+N <- 1000
+muX <- rep(0,d)
+
+X <- mvrnorm(n = N, mu = muX, Sigma = True_Sigma, empirical = FALSE)
+
+# Check the mean and covariance matrix of X
+cov(X)
+```
+
+### Finding W and estimated sigma
+
+```{r}
+set.seed(0)
+Sn <- var(X)
+
+# Suppose W is a 10*5 matrix (q = 5)
+q <- 5
+sigma2_hat <- mean(eigen(Sn)$values[(q+1):d])
+Uq <- eigen(Sn)$vectors[1:d,1:q]
+Vq <- matrix(0,q,q)
+for (i in 1:q){
+  Vq[i,i] <- eigen(Sn)$values[i]-sigma2_hat
+}
+R <- randortho(q, type = "orthonormal")
+
+W_hat <- Uq %*% sqrt(Vq) %*% R
+Est_Sigma <- W_hat %*% t(W_hat) + sigma2_hat * diag(d)
+```
+
+### Comparing results
+
+```{r}
+True_W - W_hat
+```
+
+```{r}
+True_sigma2 - sigma2_hat
+```
+
+
+```{r}
+True_Sigma - Est_Sigma
+```
+```{r}
+cov(X) - Est_Sigma
+```
+
+
+
+
+
+
+
+
+
+
+
+

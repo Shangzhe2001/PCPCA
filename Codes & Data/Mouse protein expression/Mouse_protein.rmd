@@ -1,0 +1,142 @@
+---
+title: "PCPCA Mouse Protein Expression"
+author: "Wu Shangzhe/A0194505A"
+date: '2022-09-11'
+output: html_document
+---
+
+```{r setup}
+rm(list=ls())
+setwd("C:\\Users\\92503\\Desktop\\DSA4199 FYP\\PCPCA\\CPCA & PCPCA\\Mouse protein expression")
+#setwd("C:\\Users\\ASUS\\Desktop\\DSA4199 FYP\\PCPCA\\CPCA & PCPCA\\Mouse protein expression")
+library(readxl)
+library(MASS)
+library(pracma)
+library(tidyverse)
+```
+
+```{r}
+# Read in data
+data <- read_excel("Data_Cortex_Nuclear.xlsx")
+
+# Remove NA rows
+#data <- data[complete.cases(data),] # 552 samples
+
+# (In code) Fill NA with 0
+data[is.na(data)] <- 0
+```
+
+Note for now we have 255 samples of "Control" (Non-DS in the paper) and 297 samples of "Ts65Dn" (DS in the paper)
+
+## Following the procedure of the paper
+
+### Getting foreground/background groups
+
+```{r}
+# Foreground group - data from mice who did receive shock therapy
+# data.Behavior == "S/C", data.Treatment == "Saline")
+X <- data[data$Behavior == "S/C" & data$Treatment == "Saline",] # 270 samples
+X_group <- X$Genotype
+X_group[X_group == "Control"] = "Control (Foreground)"
+X_group[X_group == "Ts65Dn"] = "Ts65Dn (Foreground)"
+X <- as.matrix(X[,2:78])
+X <- scale(X)
+
+
+# Background group - data from mice who did not receive shock therapy
+Y <- data[data$Behavior == "C/S" &  data$Treatment == "Saline" & data$Genotype == "Control" ,] # 135 samples 
+Y <- as.matrix(Y[,2:78])
+Y <- scale(Y)
+```
+
+# Perform PPCA
+
+```{r}
+# Use PPCA to find W
+data_all <- rbind(X,Y)
+d <- 77
+q <- 2
+
+Sn = var(data_all)
+
+sigma2_hat <- mean(eigen(Sn)$values[(q+1):d])
+Uq <- eigen(Sn)$vectors[1:d,1:q]
+Vq <- matrix(0,q,q)
+for (i in 1:q){
+  Vq[i,i] <- eigen(Sn)$values[i]-sigma2_hat
+}
+R <- randortho(q, type = "orthonormal")
+
+W_hat <- Uq %*% sqrt(Vq) %*% R
+M_hat <- sigma2_hat*diag(q) + t(W_hat) %*% W_hat
+```
+
+```{r}
+# Plot the PPCA data
+ppca_X <- t(solve(M_hat) %*% t(W_hat) %*% t(X))
+ppca_Y <- t(solve(M_hat) %*% t(W_hat) %*% t(Y))
+
+
+ppca_X_df <- data.frame(PC1 = ppca_X[,1],PC2 = ppca_X[,2],group = X_group)
+ppca_Y_df <- data.frame(PC1 = ppca_Y[,1],PC2 = ppca_Y[,2],group = rep("C/S (Background)",135))
+
+data_all <- rbind(ppca_X_df,ppca_Y_df)
+
+ggplot(data_all, mapping=aes(x=PC1, y=PC2))+
+  geom_point(aes(col=group))+
+  ggtitle("PPCA result for Mouse Protein Data") +
+  theme_classic()
+
+#ggsave("pca_fig9.png", plot=last_plot(), width=8,height=6)
+```
+
+# Perform PCPCA method
+
+```{r}
+# Use PCPCA to find W
+n <- dim(X)[1]
+m <- dim(Y)[1]
+D <- 77
+q <- 2
+gamma <- 1.99
+
+Cx = 0
+Cy = 0
+for (i in 1:n){
+  Cx = Cx + X[i,] %*% t(X[i,])
+}
+
+for (i in 1:m){
+  Cy = Cy + Y[i,] %*% t(Y[i,])
+}
+
+C = Cx - gamma*Cy
+
+sigma2_hat <- sum(eigen(C)$values[(q+1):D])/(n-gamma*m)/(D-q)
+
+Uq <- eigen(C)$vectors[1:D,1:q]
+lambda <- diag(eigen(C)$values[1:q])
+R <- randortho(q, type = "orthonormal")
+
+W_hat <- Uq %*% sqrt(lambda/(n-gamma*m)-sigma2_hat*diag(q)) %*% R
+M_hat <- sigma2_hat*diag(q) + t(W_hat) %*% W_hat
+```
+
+```{r}
+# Plot the PCPCA data
+pcpca_X <- t(solve(M_hat) %*% t(W_hat) %*% t(X))
+pcpca_Y <- t(solve(M_hat) %*% t(W_hat) %*% t(Y))
+
+pcpca_X_df <- data.frame(PC1 = pcpca_X[,1],PC2 = pcpca_X[,2],group = X_group)
+pcpca_Y_df <- data.frame(PC1 = pcpca_Y[,1],PC2 = pcpca_Y[,2],group = rep("C/S (Background)",m))
+
+data_all <- rbind(pcpca_X_df,pcpca_Y_df)
+
+ggplot(data_all, mapping=aes(x=PC1, y=PC2))+
+  ggtitle("PCPCA, γ = 1.99") +
+  geom_point(aes(col=group))+
+  theme_classic()
+
+#ggsave("pca_fig10_6.png", plot=last_plot(), width=8,height=6)
+```
+
